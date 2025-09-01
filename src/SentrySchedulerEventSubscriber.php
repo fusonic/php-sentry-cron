@@ -35,7 +35,6 @@ class SentrySchedulerEventSubscriber implements EventSubscriberInterface
 
     public function __construct(
         private readonly bool $enabled,
-        private readonly int $checkinMarginInMinutes = 5,
     ) {
     }
 
@@ -76,19 +75,29 @@ class SentrySchedulerEventSubscriber implements EventSubscriberInterface
             return;
         }
 
+        $message = $event->getMessage();
+        $attribute = $this->getMonitorConfigAttribute($message);
+
         $monitorConfig = new MonitorConfig(
-            schedule: MonitorSchedule::crontab((string) $trigger),
-            checkinMargin: $this->checkinMarginInMinutes
+            MonitorSchedule::crontab((string) $trigger),
+            checkinMargin: $attribute?->checkinMargin,
+            maxRuntime: $attribute?->maxRuntime,
+            failureIssueThreshold: $attribute?->failureIssueThreshold,
+            recoveryThreshold: $attribute?->maxRuntime,
         );
 
         $checkInId = captureCheckIn(
-            slug: $this->getMessageSlug($event->getMessage()),
+            slug: $this->getMessageSlug($message),
             status: CheckInStatus::inProgress(),
             monitorConfig: $monitorConfig,
         );
 
         if (null !== $checkInId) {
             $this->checkInIds[$messageId] = $checkInId;
+
+            if ($message instanceof AsyncCheckInScheduleEventInterface) {
+                $message->setCheckInId($checkInId);
+            }
         }
     }
 
@@ -99,7 +108,17 @@ class SentrySchedulerEventSubscriber implements EventSubscriberInterface
         }
 
         $messageId = $event->getMessageContext()->id;
-        $checkInId = $this->checkInIds[$messageId] ?? null;
+        $message = $event->getMessage();
+
+        if ($message instanceof AsyncCheckInScheduleEventInterface) {
+            if (!$message->isFinished()) {
+                return;
+            }
+
+            $checkInId = $message->getCheckInId();
+        } else {
+            $checkInId = $this->checkInIds[$messageId] ?? null;
+        }
 
         if (null !== $checkInId) {
             captureCheckIn(
@@ -119,7 +138,13 @@ class SentrySchedulerEventSubscriber implements EventSubscriberInterface
         }
 
         $messageId = $event->getMessageContext()->id;
-        $checkInId = $this->checkInIds[$messageId] ?? null;
+        $message = $event->getMessage();
+
+        if ($message instanceof AsyncCheckInScheduleEventInterface) {
+            $checkInId = $message->getCheckInId();
+        } else {
+            $checkInId = $this->checkInIds[$messageId] ?? null;
+        }
 
         if (null !== $checkInId) {
             captureCheckIn(
@@ -133,9 +158,29 @@ class SentrySchedulerEventSubscriber implements EventSubscriberInterface
 
     protected function getMessageSlug(object $message): string
     {
-        /** @var string $basename */
-        $basename = strrchr($message::class, '\\');
+        return (string) u(self::getClassBasename($message::class))->snake();
+    }
 
-        return (string) u(substr($basename, 1))->snake();
+    private function getMonitorConfigAttribute(object $message): ?SentryMonitorConfig
+    {
+        $reflection = new \ReflectionClass($message);
+        $attributes = $reflection->getAttributes(SentryMonitorConfig::class);
+
+        if (0 === \count($attributes)) {
+            return null;
+        }
+
+        /** @var \ReflectionAttribute<SentryMonitorConfig> $attribute */
+        $attribute = $attributes[0];
+
+        return $attribute->newInstance();
+    }
+
+    private static function getClassBasename(string $className): string
+    {
+        /** @var string $basename */
+        $basename = strrchr($className, '\\');
+
+        return substr($basename, 1);
     }
 }

@@ -19,7 +19,7 @@ final class SentrySchedulerEventSubscriberTest extends TestCase
      */
     public function testConstructor(): void
     {
-        $sentrySchedulerEventSubscriber = new SentrySchedulerEventSubscriber(true, 10);
+        $sentrySchedulerEventSubscriber = new SentrySchedulerEventSubscriber(true);
 
         /* @phpstan-ignore-next-line */
         self::assertTrue(method_exists($sentrySchedulerEventSubscriber, 'onFailure'));

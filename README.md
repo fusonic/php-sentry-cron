@@ -27,5 +27,67 @@ composer require fusonic/sentry-cron
 Fusonic\SentryCron\SentrySchedulerEventSubscriber:
     arguments:
         $enabled: true
-        $checkinMarginInMinutes: 10
 ```
+
+## Usage
+Any regular event that is triggered with a cron expression can be used.
+
+### Event Configuration
+
+By default, the Sentry defaults are used for monitor configurations. Per event, you can configure
+an attribute to use your own configuration:
+
+```php
+
+use Fusonic\SentryCron\SentryMonitorConfig;
+
+#[SentryMonitorConfig(checkinMargin: 30, maxRuntime: 30, failureIssueThreshold: 5, recoveryThreshold: 5)]
+class SomeEvent {
+    // ...
+}
+```
+
+### Async Events
+
+If you have an unpredictable longer-running scheduled task, you can manually check in by implementing `AsyncCheckInScheduleEventInterface`.
+
+The scheduled event:
+
+```php
+
+use Fusonic\SentryCron\SentryMonitorConfig;
+use Fusonic\SentryCron\AsyncCheckInScheduleEventInterface;
+use \Fusonic\SentryCron\AsyncCheckInScheduleEventTrait;
+
+class SomeEvent implements AsyncCheckInScheduleEventInterface {
+    use AsyncCheckInScheduleEventTrait;
+    
+    // ...
+}
+```
+
+The manual check in:
+
+```php
+
+class SomeEventHandler {
+    private const BATCH_SIZE = 100;
+    
+    public function __invoke(SomeEvent $event): void {
+        $offset = 0;
+        
+        // e.g.: some slow database processing
+        $entitiesToProcess = // ...
+        
+        $nextEvent = new SomeEvent(offset: $offset + self::BATCH_SIZE);
+        
+        if (count($entitiesToProcess) === 0) {
+            $nextEvent->markAsFinished();
+        }
+        
+        $this->eventBus->dispatch($nextEvent);
+    }
+
+}
+```
+
